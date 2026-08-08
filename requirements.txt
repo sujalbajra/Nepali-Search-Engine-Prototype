@@ -1,0 +1,8 @@
+elasticsearch>=8.0.0
+sentence-transformers>=2.2.2
+datasets>=2.14.0
+torch
+transformers
+nepali-stemmer
+nepalikit
+streamlit>=1.28.0
