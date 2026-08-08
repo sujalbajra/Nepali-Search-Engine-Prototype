@@ -1,0 +1,6 @@
+[server]
+fileWatcherType = "auto"
+headless = true
+
+[global]
+developmentMode = false
