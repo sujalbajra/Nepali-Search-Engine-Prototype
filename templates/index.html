@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nepali Hybrid Search Engine</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+Devanagari:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h2>⚙️ Settings</h2>
+            </div>
+            
+            <div class="sidebar-section">
+                <h3>System Status</h3>
+                <div id="es-status-indicator" class="status-indicator">
+                    <span class="dot"></span>
+                    <span class="status-text">Checking connection...</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Indexed Documents</span>
+                    <span id="indexed-docs-count" class="metric-value">...</span>
+                </div>
+            </div>
+
+            <div class="sidebar-section">
+                <h3>🎛️ Search Tuning</h3>
+                <div class="control-group">
+                    <label for="top_k">Top Results (k)</label>
+                    <input type="range" id="top_k" min="1" max="20" value="5">
+                    <span id="top_k_val" class="slider-val">5</span>
+                </div>
+                <div class="control-group">
+                    <label for="bm25_boost">BM25 Boost</label>
+                    <input type="range" id="bm25_boost" min="0" max="2" step="0.1" value="0.5">
+                    <span id="bm25_boost_val" class="slider-val">0.5</span>
+                </div>
+                <div class="control-group">
+                    <label for="vector_boost">Vector Boost</label>
+                    <input type="range" id="vector_boost" min="0" max="2" step="0.1" value="0.5">
+                    <span id="vector_boost_val" class="slider-val">0.5</span>
+                </div>
+            </div>
+
+            <div class="sidebar-section">
+                <h3>📦 Dataset Indexing</h3>
+                <div class="control-group">
+                    <label for="sample_size">Sample Size</label>
+                    <input type="number" id="sample_size" min="100" max="5000" step="100" value="1000">
+                </div>
+                <button id="btn-reindex" class="btn btn-primary btn-full">🔄 Re-index Dataset</button>
+                <div id="reindex-status" class="status-message"></div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <header class="app-header">
+                <h1 class="main-title">🇳🇵 Nepali Hybrid Search Engine</h1>
+                <p class="sub-title">Elasticsearch 8+ • BM25 Lexical • Dense Vector Embeddings (multilingual-e5-large) • Devanagari NLP Pipeline</p>
+            </header>
+
+            <nav class="tabs">
+                <button class="tab-btn active" data-target="tab-search">🔎 Search</button>
+                <button class="tab-btn" data-target="tab-compare">⚔️ Compare Modes</button>
+                <button class="tab-btn" data-target="tab-diagnostics">📊 Diagnostics</button>
+                <button class="tab-btn" data-target="tab-sandbox">🧪 NLP Sandbox</button>
+            </nav>
+
+            <div class="tab-content-container">
+                <!-- TAB 1: Search -->
+                <div id="tab-search" class="tab-pane active">
+                    <h2>🔎 Nepali Devanagari Search</h2>
+                    
+                    <div class="preset-queries">
+                        <span class="preset-label">Presets:</span>
+                        <button class="preset-btn" data-query="नेपालको इतिहास र संस्कृति">नेपालको इतिहास र संस्कृति</button>
+                        <button class="preset-btn" data-query="गण्डकी प्रदेश">गण्डकी प्रदेश</button>
+                        <button class="preset-btn" data-query="संवैधानिक गणतन्त्र">संवैधानिक गणतन्त्र</button>
+                        <button class="preset-btn" data-query="भारतीय वाङ्गमय र साहित्य">भारतीय वाङ्गमय र साहित्य</button>
+                    </div>
+
+                    <div class="search-bar-container">
+                        <input type="text" id="search-input" class="search-input" placeholder="Enter search query in Nepali Devanagari (e.g. नेपालको इतिहास र संस्कृति...)">
+                        <select id="search-mode" class="search-select">
+                            <option value="hybrid">⚡ Hybrid Search (BM25 + Vector)</option>
+                            <option value="lexical">🔤 Lexical Search Only (BM25)</option>
+                            <option value="vector">🧠 Dense Vector Search Only (Semantic)</option>
+                        </select>
+                        <button id="btn-search" class="btn btn-primary">Search</button>
+                    </div>
+
+                    <div id="search-results-container" class="results-container">
+                        <!-- Results will be injected here via JS -->
+                    </div>
+                </div>
+
+                <!-- TAB 2: Compare -->
+                <div id="tab-compare" class="tab-pane">
+                    <h2>⚔️ Multi-Mode Comparative Search</h2>
+                    <p class="section-desc">Compare how Lexical BM25, Semantic Dense Vector, and Hybrid Search rank documents for the same query.</p>
+                    
+                    <div class="search-bar-container">
+                        <input type="text" id="compare-input" class="search-input" placeholder="Enter test query for comparative evaluation">
+                        <button id="btn-compare" class="btn btn-primary">Run Benchmark</button>
+                    </div>
+
+                    <div id="compare-results-container" class="compare-grid" style="display: none;">
+                        <div class="compare-column">
+                            <h3>⚡ Hybrid Search</h3>
+                            <div class="compare-latency" id="comp-lat-hybrid"></div>
+                            <div id="comp-res-hybrid" class="compare-items"></div>
+                        </div>
+                        <div class="compare-column">
+                            <h3>🔤 Lexical BM25</h3>
+                            <div class="compare-latency" id="comp-lat-lexical"></div>
+                            <div id="comp-res-lexical" class="compare-items"></div>
+                        </div>
+                        <div class="compare-column">
+                            <h3>🧠 Dense Vector</h3>
+                            <div class="compare-latency" id="comp-lat-vector"></div>
+                            <div id="comp-res-vector" class="compare-items"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- TAB 3: Diagnostics -->
+                <div id="tab-diagnostics" class="tab-pane">
+                    <h2>📊 Index Diagnostics & Cluster Health</h2>
+                    
+                    <div class="diagnostics-grid">
+                        <div class="diag-card">
+                            <h3>Cluster Status</h3>
+                            <pre id="diag-cluster-info" class="code-block">Loading...</pre>
+                        </div>
+                        <div class="diag-card">
+                            <h3>Index Configuration</h3>
+                            <ul class="diag-list" id="diag-index-info">
+                                <li>Loading...</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- TAB 4: Sandbox -->
+                <div id="tab-sandbox" class="tab-pane">
+                    <h2>🧪 Devanagari NLP Sandbox</h2>
+                    <p class="section-desc">Test how raw Devanagari text transforms through Unicode normalization, symbol stripping, stopword removal, and suffix stemming.</p>
+                    
+                    <div class="form-group">
+                        <textarea id="sandbox-input" class="textarea-input" rows="3">नेपालको इतिहास र संस्कृतिमा विभिन्न कालखण्डमा ठूलो परिवर्तन भएको थियो।</textarea>
+                    </div>
+                    <button id="btn-sandbox" class="btn btn-primary">Run Pipeline</button>
+                    
+                    <div id="sandbox-results" class="sandbox-results" style="display: none;">
+                        <!-- Results injected via JS -->
+                    </div>
+                </div>
+
+            </div>
+        </main>
+    </div>
+
+    <!-- Templates -->
+    <template id="tpl-result-card">
+        <div class="result-card">
+            <div class="result-header">
+                <div class="result-title-group">
+                    <span class="rank-badge"></span>
+                    <span class="doc-title"></span>
+                    <span class="doc-id"></span>
+                </div>
+                <span class="score-badge"></span>
+            </div>
+            <div class="result-snippet"></div>
+            <details class="full-doc-toggle">
+                <summary>📖 Full Document Context</summary>
+                <div class="full-doc-content"></div>
+            </details>
+        </div>
+    </template>
+
+    <script src="/static/js/main.js"></script>
+</body>
+</html>

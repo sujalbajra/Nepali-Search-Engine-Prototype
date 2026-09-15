@@ -1,8 +1,10 @@
-elasticsearch>=8.0.0
+elasticsearch>=8.11,<9.0.0
 sentence-transformers>=2.2.2
 datasets>=2.14.0
 torch
 transformers
 nepali-stemmer
+importlib-resources
 nepalikit
-streamlit>=1.28.0
+Flask>=3.0.0
+gunicorn>=21.2.0
