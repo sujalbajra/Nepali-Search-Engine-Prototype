@@ -32,7 +32,7 @@ Hybrid search over Nepali (Devanagari) Wikipedia text. The stack fuses BM25 lexi
 - Hybrid retrieval: BM25 on stemmed `content` plus cosine kNN on 1024-dim embeddings, with sidebar sliders for `bm25_boost` and `vector_boost`.
 - Devanagari preprocessing: NFKC normalization, zero-width joiner removal, HTML and non-Devanagari stripping, `nepalikit` stopwords, `nepali_stemmer` suffix stripping.
 - Embeddings: Hugging Face `intfloat/multilingual-e5-large` with `passage:` / `query:` prefixes.
-- Indexing: streams Nepali Wikipedia from Hugging Face (`wikimedia/wikipedia`, config `20231101.ne`) into index `nepali_wikipedia_prototype`.
+- Indexing: streams from local `dataset.csv` into index `nepai_ir_corpus`. **Note:** The dataset will be shared to the general public after the paper is published.
 - Web app: Flask + static HTML/CSS/JS with four tabs (search, compare modes, diagnostics, NLP sandbox), Elasticsearch status, and re-index controls.
 - CLI: `python main.py` checks Elasticsearch, indexes 1,000 documents if the index is empty, then runs a sample hybrid query.
 
@@ -43,7 +43,7 @@ Hybrid search over Nepali (Devanagari) Wikipedia text. The stack fuses BM25 lexi
 ```mermaid
 flowchart TD
     subgraph Data Ingestion Pipeline
-        A[HuggingFace Wikipedia Dataset] -->|Stream Records| B[Raw Devanagari Text]
+        A[dataset.csv] -->|Stream Records| B[Raw Devanagari Text]
         B --> C[Devanagari NLP Preprocessing]
         C -->|Cleaned Passage| D[multilingual-e5-large Encoder]
         D -->|1024-dim Vector| E[Elasticsearch 8+ Index]
@@ -73,7 +73,7 @@ flowchart TD
 - Indexing prefix: `passage: <cleaned_text>`
 - Query prefix: `query: <effective_query>`
 
-### 3. Elasticsearch mapping (`nepali_wikipedia_prototype`)
+### 3. Elasticsearch mapping (`nepai_ir_corpus`)
 
 ```json
 {
@@ -175,7 +175,7 @@ The first command returns Elasticsearch cluster JSON. The second returns the HTM
 1. In a browser, open [http://localhost:5000](http://localhost:5000).
 2. Sidebar **System Status** should show ES connected. Indexed documents will be `0` until you index.
 3. First search or first re-index loads the embedding model inside the web container. That can take a few minutes with no results yet; watch `docker compose logs -f web`.
-4. Under **Dataset Indexing**, set sample size (default 1000, range 100–5000) and click **Re-index Dataset**. This downloads the Nepali Wikipedia stream from Hugging Face, embeds it, and bulk-indexes into Elasticsearch. Wait until the UI reports success.
+4. Under **Dataset Indexing**, set sample size (default 1000, range 100–5000) and click **Re-index Dataset**. This loads documents from the local `dataset.csv` file, embeds it, and bulk-indexes into Elasticsearch. Wait until the UI reports success.
 5. Run a query on the Search tab (presets such as `नेपालको इतिहास र संस्कृति` work).
 
 Re-index **deletes and recreates** the index, so existing documents are replaced.
@@ -363,7 +363,7 @@ curl -X POST http://localhost:5000/api/search \
 | `check_es_connection()` | `es: Elasticsearch` | `True` if ping succeeds. |
 | `load_encoder()` | `model_name: str` | Loads SentenceTransformer (default `intfloat/multilingual-e5-large`). |
 | `build_index()` | `es, index_name, dims=1024` | Deletes existing index if present, then creates mapping. |
-| `index_dataset()` | `es, encoder, index_name, sample_size=1000, batch_size=32, progress_callback` | Streams Wikipedia NE split, embeds, bulk indexes. Returns `(count, index_name)`. |
+| `index_dataset()` | `es, encoder, index_name, sample_size=1000, batch_size=32, progress_callback` | Streams from `dataset.csv`, embeds, bulk indexes. Returns `(count, index_name)`. |
 | `get_index_stats()` | `es, index_name` | `{ exists, count, status }`. |
 | `perform_search()` | `es, encoder, index_name, query_text, top_k, mode, bm25_boost, vector_boost` | Returns `(results, cleaned_query, latency)`. |
 
@@ -392,7 +392,7 @@ Nepali-Search-Engine-Prototype/
 | Variable | Default | Used by |
 | :--- | :--- | :--- |
 | `ES_URL` | `http://localhost:9200` (Compose web: `http://elasticsearch:9200`) | `flask_app.py`, Dockerfile / Compose |
-| `INDEX_NAME` | `nepali_wikipedia_prototype` | `flask_app.py` |
+| `INDEX_NAME` | `nepai_ir_corpus` | `flask_app.py` |
 | `FLASK_APP` | `flask_app.py` | Dockerfile |
 | `PYTHONUNBUFFERED` | `1` | Dockerfile |
 
