@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 ES_URL = os.environ.get("ES_URL", "http://localhost:9200")
-INDEX_NAME = os.environ.get("INDEX_NAME", "nepali_wikipedia_prototype")
+INDEX_NAME = os.environ.get("INDEX_NAME", "nepai_ir_corpus")
 
 # Application level globals (lazy loaded)
 es_client = None

@@ -15,7 +15,7 @@ from search_engine import (
 
 def main():
     es_url = "http://localhost:9200"
-    index_name = "nepali_wikipedia_prototype"
+    index_name = "nepai_ir_corpus"
 
     print("Connecting to Elasticsearch...")
     es = get_es_client(es_url)

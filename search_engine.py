@@ -149,11 +149,11 @@ def generate_actions(index_name: str, docs: List[Dict[str, Any]], embeddings: Li
     for row, embedding in zip(docs, embeddings):
         yield {
             "_index": index_name,
-            "_id": str(row["id"]),
+            "_id": str(row.get("doc_id", row.get("id"))),
             "_source": {
-                "title": row.get("title", f"Document #{row['id']}"),
+                "title": str(row.get("title", f"Document #{row.get('doc_id', row.get('id'))}")),
                 "content": row["_cleaned_text"],
-                "raw_text": row.get("text", "")[:1000],
+                "raw_text": str(row.get("articlebody", row.get("text", "")))[:1000],
                 "embedding": embedding,
             },
         }
@@ -162,27 +162,39 @@ def generate_actions(index_name: str, docs: List[Dict[str, Any]], embeddings: Li
 def index_dataset(
     es: Elasticsearch,
     encoder: SentenceTransformer,
-    index_name: str = "nepali_wikipedia_prototype",
+    index_name: str = "nepai_ir_corpus",
     sample_size: int = 1000,
     batch_size: int = 32,
     progress_callback=None,
 ) -> Tuple[int, str]:
     """
-    Stream documents from Wikimedia Wikipedia (Nepali), preprocess, embed, and index into ES.
+    Stream documents from dataset.csv, preprocess, embed, and index into ES.
     """
     build_index(es, index_name)
 
     if progress_callback:
-        progress_callback(0.1, "Loading dataset from HuggingFace...")
+        progress_callback(0.1, "Loading dataset from dataset.csv...")
 
-    ds = load_dataset("wikimedia/wikipedia", "20231101.ne", split="train", streaming=True)
-    sample_docs = list(ds.take(sample_size))
+    import pandas as pd
+    try:
+        if sample_size and sample_size > 0:
+            df = pd.read_csv("dataset.csv", nrows=sample_size)
+        else:
+            df = pd.read_csv("dataset.csv")
+        sample_docs = df.to_dict('records')
+    except Exception as e:
+        if progress_callback:
+            progress_callback(1.0, f"Error reading dataset.csv: {e}")
+        return 0, index_name
 
     if progress_callback:
         progress_callback(0.3, f"Preprocessing {len(sample_docs)} documents...")
 
     for row in sample_docs:
-        row["_cleaned_text"] = preprocess_nepali_text(row["text"])
+        text = str(row.get("articlebody", ""))
+        if not text or text.lower() == 'nan':
+            text = ""
+        row["_cleaned_text"] = preprocess_nepali_text(text)
 
     if progress_callback:
         progress_callback(0.5, "Generating vector embeddings...")
