@@ -14,9 +14,9 @@ document.addEventListener('DOMContentLoaded', () => {
         bm25BoostVal: document.getElementById('bm25_boost_val'),
         vectorBoost: document.getElementById('vector_boost'),
         vectorBoostVal: document.getElementById('vector_boost_val'),
-        btnReindex: document.getElementById('btn-reindex'),
-        sampleSize: document.getElementById('sample_size'),
-        reindexStatus: document.getElementById('reindex-status'),
+        incrementalFile: document.getElementById('incremental-file'),
+        btnUploadIndex: document.getElementById('btn-upload-index'),
+        uploadStatus: document.getElementById('upload-status'),
         
         // Search Tab
         searchInput: document.getElementById('search-input'),
@@ -92,39 +92,39 @@ document.addEventListener('DOMContentLoaded', () => {
     fetchDiagnostics();
     setInterval(fetchDiagnostics, 10000);
 
-    // --- Re-indexing ---
-    elements.btnReindex.addEventListener('click', async () => {
-        elements.reindexStatus.textContent = "Indexing in progress... (this may take a minute)";
-        elements.btnReindex.disabled = true;
+    // --- Incremental Indexing ---
+    elements.btnUploadIndex.addEventListener('click', async () => {
+        const file = elements.incrementalFile.files[0];
+        if (!file) {
+            elements.uploadStatus.textContent = "Please select a CSV file.";
+            return;
+        }
+        
+        elements.uploadStatus.textContent = "Uploading and indexing...";
+        elements.btnUploadIndex.disabled = true;
+        
+        const formData = new FormData();
+        formData.append("file", file);
         
         try {
-            const res = await fetch('/api/reindex', {
+            const res = await fetch('/api/upload_index', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ sample_size: parseInt(elements.sampleSize.value) })
+                body: formData
             });
-            const responseText = await res.text();
-            let data;
-            try {
-                data = JSON.parse(responseText);
-            } catch {
-                throw new Error(`Server returned HTTP ${res.status}`);
-            }
-
+            
+            const data = await res.json();
+            
             if (!res.ok) {
-                throw new Error(data.error || `Server returned HTTP ${res.status}`);
+                throw new Error(data.error || `HTTP ${res.status}`);
             }
-
-            if (data.success) {
-                elements.reindexStatus.textContent = `✅ Successfully indexed ${data.indexed_count} documents.`;
-                fetchDiagnostics();
-            } else {
-                elements.reindexStatus.textContent = `❌ Error: ${data.error}`;
-            }
+            
+            elements.uploadStatus.textContent = `✅ Added ${data.indexed_count}; skipped ${data.duplicate_count} duplicates.`;
+            elements.incrementalFile.value = ""; // clear input
+            fetchDiagnostics();
         } catch (e) {
-            elements.reindexStatus.textContent = `❌ Indexing failed: ${e.message}`;
+            elements.uploadStatus.textContent = `❌ Failed: ${e.message}`;
         } finally {
-            elements.btnReindex.disabled = false;
+            elements.btnUploadIndex.disabled = false;
         }
     });
 

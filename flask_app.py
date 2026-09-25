@@ -1,5 +1,7 @@
 import os
 import logging
+import tempfile
+import pandas as pd
 from flask import Flask, render_template, request, jsonify
 from search_engine import (
     get_es_client,
@@ -8,6 +10,7 @@ from search_engine import (
     perform_search,
     get_index_stats,
     index_dataset,
+    find_duplicate_rows,
     preprocess_nepali_text,
 )
 
@@ -151,6 +154,84 @@ def reindex_api():
     except Exception as e:
         logger.error(f"Re-indexing failed: {e}")
         return jsonify({"error": str(e)}), 500
+
+@app.route("/api/upload_index", methods=["POST"])
+def upload_index_api():
+    if 'file' not in request.files:
+        return jsonify({"error": "No file part"}), 400
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({"error": "No selected file"}), 400
+        
+    if file and file.filename.endswith('.csv'):
+        temp_path = None
+        filtered_path = None
+        try:
+            fd, temp_path = tempfile.mkstemp(suffix=".csv")
+            os.close(fd)
+            file.save(temp_path)
+            
+            # Check schema inconsistency early on
+            df = pd.read_csv(temp_path, nrows=1)
+            columns = df.columns.tolist()
+            
+            has_id = 'id' in columns or 'doc_id' in columns
+            has_text = 'text' in columns or 'articlebody' in columns
+            
+            if not has_id or not has_text:
+                os.remove(temp_path)
+                return jsonify({"error": "Schema inconsistency: CSV must contain 'id'/'doc_id' and 'text'/'articlebody' columns."}), 400
+            
+            es = get_es()
+            if not check_es_connection(es):
+                os.remove(temp_path)
+                return jsonify({"error": "Elasticsearch is offline"}), 503
+
+            docs, duplicate_count = find_duplicate_rows(
+                es, INDEX_NAME, df.to_dict("records")
+            )
+            if not docs:
+                os.remove(temp_path)
+                return jsonify({
+                    "success": True,
+                    "indexed_count": 0,
+                    "duplicate_count": duplicate_count,
+                })
+
+            filtered_fd, filtered_path = tempfile.mkstemp(suffix=".csv")
+            os.close(filtered_fd)
+            pd.DataFrame(docs).to_csv(filtered_path, index=False)
+
+            enc = get_enc()
+
+            count, _ = index_dataset(
+                es, 
+                enc, 
+                index_name=INDEX_NAME, 
+                sample_size=0, 
+                progress_callback=None,
+                overwrite=False,
+                file_path=filtered_path,
+                op_type="create",
+            )
+
+            os.remove(temp_path)
+            os.remove(filtered_path)
+            return jsonify({
+                "success": True,
+                "indexed_count": count,
+                "duplicate_count": duplicate_count,
+            })
+            
+        except Exception as e:
+            logger.error(f"Incremental indexing failed: {e}")
+            if temp_path and os.path.exists(temp_path):
+                os.remove(temp_path)
+            if filtered_path and os.path.exists(filtered_path):
+                os.remove(filtered_path)
+            return jsonify({"error": str(e)}), 500
+    else:
+        return jsonify({"error": "Only CSV files are allowed"}), 400
 
 @app.route("/api/nlp_sandbox", methods=["POST"])
 def nlp_sandbox_api():

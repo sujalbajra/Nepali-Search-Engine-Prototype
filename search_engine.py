@@ -4,6 +4,7 @@ Core search module for Nepali Hybrid Search (BM25 + Dense Vector) on Elasticsear
 
 import os
 import builtins
+import hashlib
 
 # Global UTF-8 encoding patch for Windows environment compatibility
 _orig_open = builtins.open
@@ -113,7 +114,7 @@ def load_encoder(model_name: str = "intfloat/multilingual-e5-large") -> Sentence
     return SentenceTransformer(model_name)
 
 
-def build_index(es: Elasticsearch, index_name: str, dims: int = 1024) -> None:
+def build_index(es: Elasticsearch, index_name: str, dims: int = 1024, overwrite: bool = False) -> None:
     """Create or overwrite an Elasticsearch index with BM25 + dense_vector mapping."""
     index_mapping = {
         "mappings": {
@@ -130,6 +131,9 @@ def build_index(es: Elasticsearch, index_name: str, dims: int = 1024) -> None:
                     "type": "text",
                     "index": False,
                 },
+                "content_hash": {
+                    "type": "keyword",
+                },
                 "embedding": {
                     "type": "dense_vector",
                     "dims": dims,
@@ -141,22 +145,130 @@ def build_index(es: Elasticsearch, index_name: str, dims: int = 1024) -> None:
     }
 
     if es.indices.exists(index=index_name):
-        es.indices.delete(index=index_name)
+        if overwrite:
+            es.indices.delete(index=index_name)
+        else:
+            return
     es.indices.create(index=index_name, body=index_mapping)
 
 
-def generate_actions(index_name: str, docs: List[Dict[str, Any]], embeddings: List[List[float]]):
+def content_hash(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def generate_actions(
+    index_name: str,
+    docs: List[Dict[str, Any]],
+    embeddings: List[List[float]],
+    op_type: str = "index",
+):
     for row, embedding in zip(docs, embeddings):
-        yield {
+        action = {
+            "_op_type": op_type,
             "_index": index_name,
             "_id": str(row.get("doc_id", row.get("id"))),
             "_source": {
                 "title": str(row.get("title", f"Document #{row.get('doc_id', row.get('id'))}")),
                 "content": row["_cleaned_text"],
                 "raw_text": str(row.get("articlebody", row.get("text", "")))[:1000],
+                "content_hash": content_hash(row["_cleaned_text"]),
                 "embedding": embedding,
             },
         }
+        yield action
+
+
+def backfill_content_hashes(es: Elasticsearch, index_name: str) -> int:
+    """Add hashes to older documents once so content checks remain indexed."""
+    if not es.indices.exists(index=index_name):
+        return 0
+
+    es.indices.put_mapping(
+        index=index_name,
+        properties={"content_hash": {"type": "keyword"}},
+    )
+    missing = es.count(
+        index=index_name,
+        query={"bool": {"must_not": {"exists": {"field": "content_hash"}}}},
+    )["count"]
+    if not missing:
+        return 0
+
+    actions = (
+        {
+            "_op_type": "update",
+            "_index": index_name,
+            "_id": hit["_id"],
+            "doc": {"content_hash": content_hash(hit["_source"].get("content", ""))},
+        }
+        for hit in helpers.scan(
+            es,
+            index=index_name,
+            query={
+                "query": {"bool": {"must_not": {"exists": {"field": "content_hash"}}}},
+                "_source": ["content"],
+            },
+        )
+    )
+    helpers.bulk(es, actions)
+    return missing
+
+
+def find_duplicate_rows(
+    es: Elasticsearch,
+    index_name: str,
+    docs: List[Dict[str, Any]],
+) -> Tuple[List[Dict[str, Any]], int]:
+    """Filter duplicate IDs/content using batched Elasticsearch lookups."""
+    backfill_content_hashes(es, index_name)
+
+    seen_ids = set()
+    seen_hashes = set()
+    candidate_docs = []
+    duplicate_count = 0
+    for row in docs:
+        doc_id = str(row.get("doc_id", row.get("id")))
+        row["_cleaned_text"] = preprocess_nepali_text(
+            str(row.get("articlebody", row.get("text", "")))
+        )
+        row_hash = content_hash(row["_cleaned_text"])
+        if doc_id in seen_ids or row_hash in seen_hashes:
+            duplicate_count += 1
+            continue
+        seen_ids.add(doc_id)
+        seen_hashes.add(row_hash)
+        row["content_hash"] = row_hash
+        candidate_docs.append(row)
+
+    existing_ids = set()
+    for start in range(0, len(candidate_docs), 1000):
+        ids = [str(row.get("doc_id", row.get("id"))) for row in candidate_docs[start:start + 1000]]
+        response = es.mget(index=index_name, ids=ids)
+        existing_ids.update(doc["_id"] for doc in response["docs"] if doc.get("found"))
+
+    existing_hashes = set()
+    for start in range(0, len(candidate_docs), 1000):
+        hashes = [row["content_hash"] for row in candidate_docs[start:start + 1000]]
+        response = es.search(
+            index=index_name,
+            size=10000,
+            query={"terms": {"content_hash": hashes}},
+            _source=["content_hash"],
+        )
+        existing_hashes.update(
+            hit["_source"]["content_hash"]
+            for hit in response["hits"]["hits"]
+            if hit["_source"].get("content_hash")
+        )
+
+    filtered_docs = []
+    for row in candidate_docs:
+        doc_id = str(row.get("doc_id", row.get("id")))
+        if doc_id in existing_ids or row["content_hash"] in existing_hashes:
+            duplicate_count += 1
+        else:
+            filtered_docs.append(row)
+    return filtered_docs, duplicate_count
 
 
 def index_dataset(
@@ -166,11 +278,14 @@ def index_dataset(
     sample_size: int = 1000,
     batch_size: int = 32,
     progress_callback=None,
+    overwrite: bool = False,
+    file_path: str = "dataset.csv",
+    op_type: str = "index",
 ) -> Tuple[int, str]:
     """
     Stream documents from dataset.csv, preprocess, embed, and index into ES.
     """
-    build_index(es, index_name)
+    build_index(es, index_name, overwrite=overwrite)
 
     if progress_callback:
         progress_callback(0.1, "Loading dataset from dataset.csv...")
@@ -178,9 +293,9 @@ def index_dataset(
     import pandas as pd
     try:
         if sample_size and sample_size > 0:
-            df = pd.read_csv("dataset.csv", nrows=sample_size)
+            df = pd.read_csv(file_path, nrows=sample_size)
         else:
-            df = pd.read_csv("dataset.csv")
+            df = pd.read_csv(file_path)
         sample_docs = df.to_dict('records')
     except Exception as e:
         if progress_callback:
@@ -205,7 +320,11 @@ def index_dataset(
     if progress_callback:
         progress_callback(0.8, "Bulk indexing into Elasticsearch...")
 
-    success_count, _ = helpers.bulk(es, generate_actions(index_name, sample_docs, embeddings))
+    success_count, _ = helpers.bulk(
+        es,
+        generate_actions(index_name, sample_docs, embeddings, op_type=op_type),
+        raise_on_error=op_type != "create",
+    )
 
     if progress_callback:
         progress_callback(1.0, f"Indexing complete. Indexed {success_count} documents.")
